@@ -1,35 +1,43 @@
-## Echo – AI Triage & Notification Agent for Ashesi Students
+## Echo – AI Triage & Notification Agent for Students
 
-Echo helps students connect their Ashesi Microsoft 365 account so the agent can detect and prioritize important emails, summarize them, optionally create calendar invites, and push concise notifications to WhatsApp and the web app/extension—so they don’t miss urgent/important university messages or other chosen priorities.
+Echo helps students connect their email so the agent can detect and prioritize important messages, summarize them, optionally create calendar invites, and push concise notifications to WhatsApp and the web app/extension—so they don’t miss urgent/important university messages or other chosen priorities.
 
 Reference repo: [Echo main repository](https://github.com/Stadav012/Echo-.git)
+
+---
+
+### Current POC Focus: Gmail
+
+For fast testing without any institutional IT involvement, the MVP POC uses Gmail OAuth + Gmail API.
+- See `docs/gmail-setup.md` for step-by-step setup.
+- Microsoft 365/Outlook integration is planned next and documented for later rollout.
 
 ---
 
 ### 1) Product Scope and UX
 
 - **User roles**
-  - **Student**: Authorizes Microsoft 365, sets preferences, receives notifications.
-  - **Admin**: Manages allowlists/weights for Ashesi senders and categories, investigates issues.
+  - **Student**: Authorizes Gmail (POC) or Microsoft later, sets preferences, receives notifications.
+  - **Admin**: Manages allowlists/weights for senders and categories, investigates issues.
 
 - **MVP user flows**
   - **Onboarding**
-    - Sign in with Microsoft (Ashesi SSO only).
-    - Accept scopes: Mail.Read, optional Mail.ReadWrite, Calendars.ReadWrite, offline_access, User.Read.
+    - Sign in with Google (POC). Later: Microsoft SSO when admin consent is available.
+    - Scopes (POC): Gmail read-only, plus openid/email/profile.
     - Set notification preferences: WhatsApp opt-in (phone verification), web notifications, digest frequency, categories to prioritize.
   - **Email triage**
-    - Ingest mails from last 30 days; real-time via Graph change notifications/webhooks.
+    - Ingest mails (poll Gmail initially).
     - Prioritize (model + rules): e.g., Registrar, Finance, Faculty, Deadlines, Exams, Course comms.
     - Summarize and extract actions: date/time, RSVP, attachments, deadlines.
   - **Notifications**
-    - WhatsApp: concise summaries with CTA links (View, Add to Calendar, Mark read).
+    - WhatsApp: concise summaries with CTA links (View, Add to Calendar).
     - Web app: inbox-like feed with filters, “Why is this important?”, feedback controls.
   - **Calendar**
-    - Create events for detected meetings/deadlines; confirm or auto-add per preference.
+    - POC: provide `.ics` download for quick add; later: Google Calendar API or Microsoft Calendar.
   - **Feedback loop**
     - Thumbs up/down on priority/summaries; retrain weights per user and globally.
 
-- **Non-goals (MVP)**
+- **Non-goals (POC)**
   - No sending email replies.
   - English only.
   - WhatsApp and Web only (no Slack/Telegram).
@@ -69,38 +77,36 @@ Reference repo: [Echo main repository](https://github.com/Stadav012/Echo-.git)
   - Next.js 14 (App Router), TypeScript, Tailwind, shadcn/ui.
   - Pages: `/` marketing, `/dashboard` feed/settings, `/onboarding` auth + preferences.
 - **Browser extension**
-  - MV3 React popup; same APIs; real-time via WebSocket/SSE.
+  - MV3 React popup; same APIs; optional Outlook-on-web client parser (future option without Graph).
 - **Backend** (NestJS, TypeScript)
   - Services
-    - Auth service: Azure AD OAuth + token storage + tenant enforcement.
-    - Ingestion service: Microsoft Graph delta + webhooks + retry queue.
+    - Auth service: Google OAuth (POC) + token storage; later add Microsoft OAuth.
+    - Ingestion service: Gmail polling initially; later Microsoft Graph delta + webhooks.
     - Prioritizer: rules engine + LLM classifier.
     - Summarizer: LLM with structured output.
     - Notifications: WhatsApp (Twilio) + Web push/SSE.
-    - Calendar service: event creation with idempotency.
+    - Calendar service: `.ics` generation; later Calendar APIs.
 - **Data**
   - Postgres (users, tokens, mail index, priority, summaries, events, preferences, feedback).
   - Redis (queues, rate limits, dedupe, sessions).
   - Optional blob storage for snapshots; prefer IDs and normalized text.
 - **Infra**
-  - Docker; Azure (App Service/Container Apps), Azure Postgres, Azure Cache for Redis.
-  - IaC: Terraform minimal stack.
-  - Observability: OpenTelemetry, Sentry, metrics (Azure Monitor/Prometheus).
+  - Docker; Azure/AWS; Terraform minimal stack.
+  - Observability: OpenTelemetry, Sentry, metrics.
 
 ---
 
-### 5) Microsoft Graph Integration
+### 5) Gmail Integration (POC)
 
-- **Scopes**: `User.Read`, `offline_access`, `Mail.Read` (MVP), `Calendars.ReadWrite`; optional `Mail.ReadWrite` if mark-as-read.
+- **Scopes**: `openid`, `email`, `profile`, `https://www.googleapis.com/auth/gmail.readonly`
 - **Auth**
-  - Single-tenant (Ashesi tenant ID enforced).
-  - PKCE + Authorization Code; refresh tokens rotated.
+  - Google OAuth External (Testing) with test users.
+  - PKCE + Authorization Code; refresh tokens stored encrypted.
 - **Mail ingestion**
-  - Backfill: `/me/messages` filtered; store ids and normalized fields.
-  - Delta: `/me/mailFolders('Inbox')/messages/delta`.
-  - Webhook: Graph change notifications; signature validation; retries.
-- **Calendar**
-  - Create/update events idempotently via externalId; time zones respected.
+  - Poll `users/me/messages` with query filters; fetch bodies as needed.
+  - Store messageId, threadId, sender, subject, snippet, internalDate, labelIds.
+- **Calendar (POC)**
+  - Generate `.ics` for add-to-calendar; later: Google Calendar API events.
 
 ---
 
@@ -118,22 +124,21 @@ Reference repo: [Echo main repository](https://github.com/Stadav012/Echo-.git)
 
 ### 7) Data Model (MVP)
 
-- `User(id, ms_user_id, tenant_id, email, phone, whatsapp_opt_in, scopes, created_at)`
-- `OAuthToken(user_id, access_token_enc, refresh_token_enc, expires_at, key_id)`
-- `Message(id, ms_message_id, sender, subject, body_excerpt, received_at, thread_id, has_attachments, raw_size)`
+- `User(id, provider, provider_user_id, email, phone, whatsapp_opt_in, scopes, created_at)`
+- `OAuthToken(user_id, provider, access_token_enc, refresh_token_enc, expires_at, key_id)`
+- `Message(id, provider, provider_message_id, sender, subject, body_excerpt, received_at, thread_id, has_attachments, raw_size)`
 - `Priority(id, message_id, score, labels[], reason, created_at)`
 - `Summary(id, message_id, text, actions_json, created_at)`
 - `Preference(user_id, categories[], notify_channels[], auto_calendar, quiet_hours)`
-- `CalendarEvent(id, message_id, ms_event_id, when_start, when_end, location, status)`
+- `CalendarEvent(id, message_id, provider_event_id, when_start, when_end, location, status)`
 - `Feedback(id, user_id, message_id, type, value, comment, created_at)`
 
 ---
 
 ### 8) Security & Privacy
 
-- Tenant allowlisting; reject non-Ashesi accounts.
 - Store minimum data; encrypt tokens and sensitive fields (KMS-managed).
-- Least privilege Graph scopes.
+- Least privilege scopes; clear disconnect/revoke flow.
 - PII redaction in logs; no raw body storage unless required.
 - Secrets in Key Vault; service mTLS.
 - DPO-ready data export and delete.
@@ -142,7 +147,7 @@ Reference repo: [Echo main repository](https://github.com/Stadav012/Echo-.git)
 
 ### 9) Observability & SLAs
 
-- Error budgets and retries on Graph webhooks.
+- Error budgets and retries on polling/API errors.
 - Dead letter queues for failed LLM/WhatsApp sends.
 - Metrics: ingestion latency, classification accuracy, open rate, notification delivery rate.
 
@@ -151,17 +156,17 @@ Reference repo: [Echo main repository](https://github.com/Stadav012/Echo-.git)
 ### 10) Delivery Plan and Milestones
 
 - **Milestone 0: Foundations (1 week)**
-  - Repo scaffolds, CI, IaC, Azure app registration, DB schema, basic auth.
+  - Repo scaffolds, CI, IaC, OAuth base, DB schema, basic auth.
 - **Milestone 1: Ingestion + Dashboard (1–2 weeks)**
-  - Backfill and webhook processing; prioritized feed in dashboard.
+  - Gmail polling and prioritized feed in dashboard.
 - **Milestone 2: Summaries + Actions (1 week)**
-  - LLM summaries, action extraction, calendar create.
+  - LLM summaries, action extraction, `.ics` create.
 - **Milestone 3: Notifications (1 week)**
   - WhatsApp integration + web real-time notifications.
 - **Milestone 4: Feedback + Model (1 week)**
   - Feedback loop; refine scoring.
-- **Milestone 5: Hardening (ongoing)**
-  - Security, rate limits, observability, admin tooling.
+- **Milestone 5: Microsoft 365 Integration (later)**
+  - Switch/extend ingestion to Microsoft Graph with admin consent.
 
 ---
 
@@ -178,15 +183,13 @@ Reference repo: [Echo main repository](https://github.com/Stadav012/Echo-.git)
 ### 12) Risks and Mitigations
 
 - **WhatsApp template approvals**: Request early; fallback to web notifications.
-- **Graph webhook reliability**: Use delta sync as safety net; alert on gaps.
+- **API quotas**: Implement backoff and caching; use minimal scopes.
 - **LLM costs**: Cache summaries, batch, use small models; extractive fallback.
 - **Privacy concerns**: Transparent settings and opt-ins; configurable retention.
 
 ---
 
-### Next Steps
+### References
 
-- Scaffold repo (frontend, backend, infra).
-- Set up Azure AD app registration and base OAuth flow.
-- Implement Graph ingestion and dashboard feed.
-- Add summarization/action extraction, calendar integration, and notifications.
+- Gmail setup guide: `docs/gmail-setup.md`
+- Microsoft Graph (future): `docs/azure-ad-app-registration.md`, `docs/tenant-strategy.md`
